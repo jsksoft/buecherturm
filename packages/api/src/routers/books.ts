@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb, books, userBooks } from '@buecherturm/database';
 import { encrypt, decrypt } from '@buecherturm/shared';
@@ -134,5 +134,42 @@ export const booksRouter = router({
         });
 
       return { saved: true };
+    }),
+
+  // F-10 Mood-Matching: finds books whose ai_tags overlap with the requested moods.
+  // Pure DB query — no external AI call. jsonb ?| operator checks if any input tag is an array element.
+  moodMatch: protectedProcedure
+    .input(
+      z.object({
+        moods: z.array(z.string().min(1).max(50)).min(1).max(8),
+        limit: z.number().int().min(1).max(50).default(20),
+      }),
+    )
+    .query(async ({ input }) => {
+      const db = getDb();
+
+      // EXISTS subquery: true when any element of ai_tags matches one of the input moods
+      const matched = await db
+        .select({
+          id: books.id,
+          isbn: books.isbn,
+          title: books.title,
+          authors: books.authors,
+          coverUrl: books.coverUrl,
+          description: books.description,
+          publishedYear: books.publishedYear,
+          language: books.language,
+          aiTags: books.aiTags,
+        })
+        .from(books)
+        .where(
+          sql`EXISTS (
+            SELECT 1 FROM jsonb_array_elements_text(${books.aiTags}) AS t
+            WHERE t = ANY(ARRAY[${sql.join(input.moods.map((m) => sql`${m}`), sql`, `)}])
+          )`,
+        )
+        .limit(input.limit);
+
+      return { books: matched, moods: input.moods };
     }),
 });

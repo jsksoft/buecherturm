@@ -3,8 +3,8 @@
 - [x] Phase 1: Infrastructure & Scaffolding
 - [x] Phase 2: Database Schema & Security (RLS)
 - [x] Phase 3: Auth & Responsive Shell
-- [ ] Phase 4: Core Tracking & Search
-- [ ] Phase 5: AI Features & Admin
+- [x] Phase 4: Core Tracking & Search
+- [x] Phase 5: AI Features & Admin
 - [ ] Phase 6: GDPR & Final Audit
 
 ---
@@ -212,6 +212,72 @@ Run again: `pnpm --filter @buecherturm/shared verify:crypto`
 - `startTransition(async () => { setOptimistic(...); await mutation... })` — wraps all optimistic ops
 
 **Build result:** `next build` ✓ — 7 routes, TypeScript clean
+
+---
+
+---
+
+## Phase 5 Log
+
+### Step 7: AI Provider Abstraction, Vector Search, Rate-Limiting & Admin Dashboard (2026-05-18)
+**Status:** Completed ✓
+
+#### packages/ai — Multi-provider abstraction
+
+| File | Purpose |
+|---|---|
+| `src/openai.ts` | `OpenAIProvider` — GPT-4o mini completions + `text-embedding-3-small` embeddings |
+| `src/gemini.ts` | `GeminiProvider` — Gemini 2.0 Flash Lite via `@google/genai` SDK |
+| `src/registry.ts` | `buildProvider()`, `getProvider()`, `getEmbeddingProvider()`, `invalidateProviderCache()` — factory + module-level instance cache |
+
+**Design decisions:**
+- Embeddings always use OpenAI `text-embedding-3-small` (1536 dims) regardless of active completion provider — ensures pgvector cosine distances remain comparable across provider switches.
+- Provider cache is invalidated by `admin.setActiveProvider` so the next completion request immediately picks up the new provider without a server restart.
+- All content passes through `sanitizeForLLM()` before leaving the app boundary (CLAUDE.md rule #4).
+
+#### packages/api — Rate-Limiting, adminProcedure, new routers
+
+**Rate-Limiting (`src/ratelimit.ts`):**
+- `searchRateLimit`: 20 req/min per user ID (text search — cheap)
+- `semanticRateLimit`: 5 req/min per user ID (vector search — expensive, hits OpenAI embeddings API)
+- Both use `@upstash/ratelimit` sliding-window algorithm over Upstash Redis (env already configured)
+
+**`src/trpc.ts` — `adminProcedure`:**
+- Extends standard procedure with a DB lookup on `users.is_admin`
+- Returns `FORBIDDEN` for non-admin users, `UNAUTHORIZED` for unauthenticated
+
+**`src/routers/admin.ts`:**
+| Procedure | Description |
+|---|---|
+| `admin.getActiveProvider` | Reads `active_llm_provider` from `admin_config` (defaults to `anthropic`) |
+| `admin.setActiveProvider` | Upserts `admin_config`, then calls `invalidateProviderCache()` |
+| `admin.getConfig` | Returns all `admin_config` rows |
+| `admin.setConfig` | Generic key-value upsert |
+| `admin.deleteConfig` | Deletes a config key |
+| `admin.getUsageStats` | Aggregated token usage per provider/model/feature, last 30 days |
+| `admin.getUsageLog` | Raw `ai_usage_log` entries (last N) |
+
+**`src/routers/books.ts` — `books.moodMatch` (F-10):**
+- Input: `moods: string[]` (1–8 tags), `limit: number`
+- Uses `EXISTS (SELECT 1 FROM jsonb_array_elements_text(ai_tags) AS t WHERE t = ANY(ARRAY[...]))` — pure DB, no external AI call
+- Each mood value is a parameterized SQL argument (injection-safe)
+
+**`src/routers/search.ts` — `search.semanticSearch`:**
+- Calls `getEmbeddingProvider().embed([query])` to produce a 1536-dim vector
+- Uses Drizzle `cosineDistance(books.embedding, queryVector)` + `gt(similarity, minSimilarity)` with `orderBy(desc(similarity))`
+- Rate-limited at the procedure level via `semanticRateLimit`
+- Returns ranked results with similarity score
+
+#### apps/web — /admin Dashboard (`src/app/(app)/admin/page.tsx`)
+
+**Design:**
+- Gradient header: violet → indigo → sky with a subtle radial dot mesh overlay
+- Provider selector: 3 cards in a CSS grid, AI-themed icons (inline SVG), animated active indicator (pinging dot)
+- Usage table: tabular-nums, 30-day aggregated stats
+- Desktop-only: mobile breakpoint renders a centered empty-state message
+- Admin link added to Sidebar (`IconAdmin` = shield icon)
+
+**Build result:** `next build` ✓ — 9 routes, TypeScript clean
 
 ---
 

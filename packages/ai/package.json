@@ -5,7 +5,9 @@
   "types": "./src/index.ts",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "@buecherturm/shared": "workspace:*"
+    "@buecherturm/shared": "workspace:*",
+    "@google/genai": "^2.4.0",
+    "openai": "^6.38.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

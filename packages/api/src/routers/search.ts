@@ -1,7 +1,10 @@
-import { ilike, or, eq, sql } from 'drizzle-orm';
+import { cosineDistance, desc, gt, ilike, or, eq, sql } from 'drizzle-orm';
+import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { getDb, books } from '@buecherturm/database';
+import { getEmbeddingProvider } from '@buecherturm/ai';
 import { protectedProcedure, router } from '../trpc';
+import { semanticRateLimit } from '../ratelimit';
 
 // ─── Shared result shape ───────────────────────────────────────────────────────
 
@@ -301,5 +304,55 @@ export const searchRouter = router({
       cacheExternalResults(results).catch(() => {});
 
       return { results };
+    }),
+
+  // Semantic vector search using pgvector cosine similarity.
+  // Embeds the query via OpenAI text-embedding-3-small, then finds the nearest book vectors.
+  // Rate-limited to 5 req/min per user (embedding API call is expensive).
+  semanticSearch: protectedProcedure
+    .input(
+      z.object({
+        query: z.string().min(2).max(500).trim(),
+        limit: z.number().int().min(1).max(20).default(10),
+        minSimilarity: z.number().min(0).max(1).default(0.3),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const { success } = await semanticRateLimit.limit(ctx.user.id);
+      if (!success) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Too many semantic searches. Please wait a moment.',
+        });
+      }
+
+      const embedder = getEmbeddingProvider();
+      const [[queryVector]] = [await embedder.embed([input.query])];
+
+      if (!queryVector || queryVector.length === 0) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Embedding generation failed.' });
+      }
+
+      const db = getDb();
+      const similarity = sql<number>`1 - (${cosineDistance(books.embedding, queryVector)})`;
+
+      const rows = await db
+        .select({
+          id: books.id,
+          isbn: books.isbn,
+          title: books.title,
+          authors: books.authors,
+          coverUrl: books.coverUrl,
+          description: books.description,
+          publishedYear: books.publishedYear,
+          language: books.language,
+          similarity,
+        })
+        .from(books)
+        .where(gt(similarity, input.minSimilarity))
+        .orderBy(desc(similarity))
+        .limit(input.limit);
+
+      return { results: rows };
     }),
 });
