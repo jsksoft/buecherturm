@@ -3,8 +3,12 @@
   "private": true,
   "main": "./src/index.ts",
   "types": "./src/index.ts",
+  "scripts": {
+    "verify:crypto": "tsx verify-crypto.ts"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
     "typescript": "^5.8.3"
   }
 }

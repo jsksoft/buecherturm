@@ -5,7 +5,7 @@
   "types": "./src/index.ts",
   "scripts": {
     "db:generate": "dotenv -e ../../apps/web/.env.local -- drizzle-kit generate",
-    "db:push": "dotenv -e ../../apps/web/.env.local -- drizzle-kit push"
+    "db:push": "dotenv -e ../../apps/web/.env.local -- drizzle-kit push --force"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",

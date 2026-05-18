@@ -62,8 +62,44 @@
 
 ---
 
+## Phase 2 — Step 3: AES-256-GCM Crypto Module (2026-05-18)
+**Status:** Completed ✓
+
+**Implementation (`packages/shared/src/crypto.ts`):**
+
+Wire format: `[version: 1 byte][IV: 12 bytes][ciphertext + auth-tag: N + 16 bytes]` — base64 encoded.
+
+| Property | Value | Rationale |
+|---|---|---|
+| Cipher | AES-256-GCM | NIST-approved AEAD — provides confidentiality + integrity in one pass |
+| IV | 12 bytes, `getRandomValues` | 96-bit IV is NIST recommended for GCM; fresh per call |
+| Auth tag | 128 bits (16 bytes) | Maximum GCM tag length; appended to ciphertext by Web Crypto automatically |
+| KDF | PBKDF2-SHA256 | OWASP 2023 recommendation |
+| KDF iterations | 210,000 | OWASP 2023 recommendation (was 100k) |
+| Key caching | Module-level `Map<secret, CryptoKey>` | Amortises 210k PBKDF2 iterations across requests |
+| Version byte | `0x01` | Forward compat — allows KDF/cipher migration without silent breakage |
+| Base64 helpers | Loop-based (not spread) | `String.fromCharCode(...array)` overflows call stack > ~65K bytes |
+
+**Verification (`packages/shared/verify-crypto.ts`) — all 7 tests passed:**
+```
+✓  Email: encrypt/decrypt roundtrip
+✓  Private note: unicode & special characters roundtrip
+✓  Empty string: valid encryption target
+✓  IV randomness: same plaintext → different ciphertext each time
+✓  Auth tag: single-bit tamper in ciphertext throws CryptoError
+✓  Wrong key: decrypt with wrong secret throws CryptoError
+✓  sanitizeForLLM: redacts email, IPv4, and phone patterns
+─────────────────────────────────────────
+7 tests — 7 passed, 0 failed
+```
+
+Run again: `pnpm --filter @buecherturm/shared verify:crypto`
+
+---
+
 ## Error Log & Lessons Learned
 | ID | Error Description | Resolution | Lesson Learned |
 |---|---|---|---|
 | E-001 | Turborepo 2.x: `Could not resolve workspaces. Missing packageManager field` | Added `"packageManager": "pnpm@10.9.0"` to root `package.json` | Turborepo 2.x requires `packageManager` in root `package.json`; Turborepo 1.x did not |
 | E-002 | pnpm v10: esbuild/sharp build scripts blocked by default | Run `pnpm rebuild esbuild` to activate binary; or use `node_modules/.bin/drizzle-kit` directly from package dir | pnpm v10 blocks all build scripts by default; drizzle-kit still resolves from local `.bin/` |
+| E-003 | tsx top-level await fails under CJS (no `"type":"module"` in package.json) | Wrap all top-level awaits in an async IIFE `(async () => { ... })()` | tsx defaults to CJS without `"type":"module"` — top-level await requires ESM mode |
