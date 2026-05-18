@@ -22,6 +22,8 @@ export const users = pgTable('users', {
   displayName: text('display_name'),
   avatarUrl: text('avatar_url'),
   isAdmin: boolean('is_admin').default(false).notNull(),
+  // Nullable — set to now()+30d when user requests account deletion (GDPR Art. 17)
+  deletionScheduledAt: timestamp('deletion_scheduled_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });

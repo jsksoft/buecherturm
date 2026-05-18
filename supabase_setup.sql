@@ -270,3 +270,57 @@ CREATE POLICY "admin_config_all_admin" ON public.admin_config
 -- CREATE INDEX CONCURRENTLY idx_profiles_embedding
 --   ON public.user_reading_profiles USING ivfflat (profile_embedding vector_cosine_ops)
 --   WITH (lists = 100);
+
+
+-- =============================================================================
+-- STEP 4 — GDPR HARD DELETE JOB
+-- Run this AFTER STEP 2 (RLS policies must exist).
+--
+-- Purpose: permanently delete auth.users rows for accounts whose 30-day
+-- deletion grace period has expired. Cascades to all public.* rows.
+--
+-- Deployment options:
+--   A) Supabase Edge Function (scheduled via Supabase Dashboard → Edge Functions)
+--   B) pg_cron extension: SELECT cron.schedule('gdpr-hard-delete', '0 3 * * *',
+--        $$ SELECT public.gdpr_hard_delete_expired_accounts() $$);
+-- =============================================================================
+
+-- Function: deletes auth.users rows whose deletion was requested > 30 days ago.
+-- Cascades automatically to public.users (ON DELETE CASCADE on FK) and all
+-- downstream tables (user_books, user_reading_profiles, bookclub_members, etc.).
+CREATE OR REPLACE FUNCTION public.gdpr_hard_delete_expired_accounts()
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  _deleted_count integer := 0;
+  _uid uuid;
+BEGIN
+  FOR _uid IN
+    SELECT id
+    FROM public.users
+    WHERE deletion_scheduled_at IS NOT NULL
+      AND deletion_scheduled_at <= NOW()
+  LOOP
+    -- Delete from auth.users — cascades to public.users + all FK children
+    DELETE FROM auth.users WHERE id = _uid;
+    _deleted_count := _deleted_count + 1;
+  END LOOP;
+
+  RETURN _deleted_count;
+END;
+$$;
+
+-- Allow the service role to invoke this function (called by Edge Function / cron).
+REVOKE ALL ON FUNCTION public.gdpr_hard_delete_expired_accounts() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.gdpr_hard_delete_expired_accounts() TO service_role;
+
+-- Optional: enable pg_cron and schedule daily at 03:00 UTC.
+-- Uncomment after enabling the pg_cron extension in Supabase Dashboard.
+-- SELECT cron.schedule(
+--   'gdpr-hard-delete-expired',
+--   '0 3 * * *',
+--   $$ SELECT public.gdpr_hard_delete_expired_accounts() $$
+-- );

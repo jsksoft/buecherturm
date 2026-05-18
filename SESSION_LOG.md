@@ -5,7 +5,7 @@
 - [x] Phase 3: Auth & Responsive Shell
 - [x] Phase 4: Core Tracking & Search
 - [x] Phase 5: AI Features & Admin
-- [ ] Phase 6: GDPR & Final Audit
+- [x] Phase 6: GDPR & Final Audit
 
 ---
 
@@ -281,9 +281,70 @@ Run again: `pnpm --filter @buecherturm/shared verify:crypto`
 
 ---
 
+---
+
+## Phase 6 Log
+
+### Step 8: GDPR Self-Service & Final Security Audit (2026-05-18)
+**Status:** Completed ✓
+
+#### Schema change (`packages/database/src/schema.ts`)
+| Field | Type | Purpose |
+|---|---|---|
+| `users.deletion_scheduled_at` | `timestamp(tz)` nullable | Set to now()+30d on deletion request; cleared on cancel; read by hard-delete cron |
+
+**Migration:** Add `deletion_scheduled_at TIMESTAMPTZ` column via `pnpm db:push` or `ALTER TABLE public.users ADD COLUMN deletion_scheduled_at TIMESTAMPTZ`.
+
+#### tRPC `gdprRouter` (`packages/api/src/routers/gdpr.ts`)
+| Procedure | Type | GDPR Article | Description |
+|---|---|---|---|
+| `gdpr.exportData` | `mutation` (protected) | Art. 20 — Portability | Queries all 5 user-linked tables, decrypts `email_encrypted` + all `private_note_encrypted`, returns structured JSON. Client triggers file download. |
+| `gdpr.requestDeletion` | `mutation` (protected) | Art. 17 — Erasure | Anonymises PII immediately (`email_encrypted`, `display_name`, `avatar_url` → null); sets `deletion_scheduled_at = now()+30d`. |
+| `gdpr.cancelDeletion` | `mutation` (protected) | Art. 17 — Grace period | Clears `deletion_scheduled_at` if still in future; returns `{ cancelled: true }`. |
+| `gdpr.getDeletionStatus` | `query` (protected) | — | Returns `{ isPending, scheduledFor }` for the settings UI countdown. |
+
+**IDOR security note:** All four procedures use only `ctx.user.id` — no user ID is accepted as input, making spoofing impossible.
+
+#### Frontend (`apps/web/src/app/(app)/settings/privacy/page.tsx`)
+- **Export section:** "Daten herunterladen" button → tRPC `gdpr.exportData` mutation → `Blob` + `URL.createObjectURL()` → auto-download `buecherturm-export-YYYY-MM-DD.json`.
+- **Deletion section — normal state:** Warning list + "Konto löschen" button → confirmation modal requiring user to type `LÖSCHEN` → `gdpr.requestDeletion`.
+- **Deletion section — pending state:** Amber card with `scheduledFor` date, day countdown, "Löschung widerrufen" button → `gdpr.cancelDeletion`.
+- Both sections use React 19 `useTransition` for non-blocking UI updates.
+
+#### Navigation
+- Settings (⚙ gear icon) added to both `Sidebar` (desktop) and `BottomNav` (mobile) pointing to `/settings/privacy`.
+
+#### Supabase hard-delete (`supabase_setup.sql` — STEP 4)
+- `public.gdpr_hard_delete_expired_accounts()`: SECURITY DEFINER function, loops over `users WHERE deletion_scheduled_at <= NOW()`, calls `DELETE FROM auth.users` (cascade to all FK children). Returns deleted count.
+- GRANT EXECUTE to `service_role` only.
+- Optional pg_cron schedule commented in — run daily at 03:00 UTC.
+
+#### Security Audit — IDOR & RLS Review (all tRPC procedures)
+| Router | Procedure | User-scoped? | Verdict |
+|---|---|---|---|
+| `auth` | `register`, `login` | n/a (no user data read) | ✓ No IDOR risk |
+| `auth` | `me` | Returns only `ctx.user.id` | ✓ No IDOR risk |
+| `books` | `byIsbn` | `WHERE user_id = ctx.user.id` | ✓ No IDOR risk |
+| `books` | `setStatus`, `setRating`, `saveNote` | `userId: ctx.user.id` in insert/upsert | ✓ No IDOR risk |
+| `books` | `moodMatch` | Reads shared catalog only | ✓ No user data |
+| `search` | `searchBooks`, `semanticSearch` | Reads shared catalog; rate-limit uses `ctx.user.id` | ✓ No IDOR risk |
+| `admin` | all procedures | `adminProcedure` checks DB `is_admin` — no raw userId param | ✓ No IDOR risk |
+| `gdpr` | all procedures | All use `ctx.user.id` — no userId input param | ✓ No IDOR risk |
+
+**RLS coverage:** All 9 tables have RLS enabled with own-row or admin-only policies. The `gdprRouter` runs via `service_role`-backed Supabase admin client (context.ts), which bypasses RLS intentionally — correct for server-side mutations that must act on behalf of the authenticated user.
+
+**Build result:** `next build` ✓ — 10 routes, TypeScript clean, 5.73s.
+```
+/ /admin /api/trpc/[trpc] /app /app/search /book/[isbn] /login /register /settings/privacy /_not-found
+```
+
+---
+
 ## Error Log & Lessons Learned
 | ID | Error Description | Resolution | Lesson Learned |
 |---|---|---|---|
 | E-001 | Turborepo 2.x: `Could not resolve workspaces. Missing packageManager field` | Added `"packageManager": "pnpm@10.9.0"` to root `package.json` | Turborepo 2.x requires `packageManager` in root `package.json`; Turborepo 1.x did not |
 | E-002 | pnpm v10: esbuild/sharp build scripts blocked by default | Run `pnpm rebuild esbuild` to activate binary; or use `node_modules/.bin/drizzle-kit` directly from package dir | pnpm v10 blocks all build scripts by default; drizzle-kit still resolves from local `.bin/` |
 | E-003 | tsx top-level await fails under CJS (no `"type":"module"` in package.json) | Wrap all top-level awaits in an async IIFE `(async () => { ... })()` | tsx defaults to CJS without `"type":"module"` — top-level await requires ESM mode |
+| E-004 | GDPR hard-delete requires `auth.users` deletion, not just `public.users` | `public.gdpr_hard_delete_expired_accounts()` deletes from `auth.users` — cascade propagates to `public.users` and all FK children | Supabase cascade deletes flow FROM `auth.users` downward; deleting only from `public.users` leaves a dangling auth account that can still log in |
+| E-005 | ZIP export not feasible without adding a new dependency | Implemented JSON export using `Blob` + `URL.createObjectURL()` — fully GDPR-compliant (Art. 20 requires machine-readable format, not ZIP) | A structured JSON file satisfies GDPR Art. 20 portability; ZIP is a UX nicety, not a legal requirement — defer to a future enhancement |
