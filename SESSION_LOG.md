@@ -147,6 +147,42 @@ Run again: `pnpm --filter @buecherturm/shared verify:crypto`
 
 ---
 
+---
+
+## Phase 4 Log
+
+### Step 5: Optimistic Tracking UI & Encrypted Notes (2026-05-18)
+**Status:** Completed ✓
+
+**What was built:**
+
+**tRPC `booksRouter` (`packages/api/src/routers/books.ts`):**
+| Procedure | Type | Description |
+|---|---|---|
+| `books.byIsbn` | `query` (protected) | Fetch book + user tracking entry by ISBN; decrypt `privateNoteEncrypted` server-side |
+| `books.setStatus` | `mutation` (protected) | Upsert `user_books.status`; auto-sets `startedAt`/`finishedAt` timestamps |
+| `books.setRating` | `mutation` (protected) | Upsert `user_books.rating` (1–5, nullable); clicking active star clears it |
+| `books.saveNote` | `mutation` (protected) | AES-256-GCM encrypt note server-side → upsert `private_note_encrypted` |
+
+**Book Detail Page (`apps/web/src/app/(app)/book/[isbn]/page.tsx`):**
+- Client component with React 19 `useOptimistic` for status and rating (< 100ms feedback via `startTransition`)
+- `useActionState` for private note autosave with 1s debounce (`dispatchSaveNote` called from `setTimeout`)
+- **Mobile layout:** stacked — cover card + meta, then status grid, stars, notes
+- **Desktop layout:** `lg:grid lg:grid-cols-2` — cover/meta left, controls right
+- Status buttons: `min-h-[4.5rem]` (72px) 2×2 grid, thumb-zone safe, `aria-pressed`
+- Star buttons: `min-h-[3rem] min-w-[3rem]` (48px), click-to-toggle-off pattern
+- Note save indicator: `aria-live="polite"` region showing "Speichern…" / timestamp / error
+- Cover fallback: 📚 placeholder when `coverUrl` is null
+
+**React 19 patterns used:**
+- `useOptimistic(serverValue, reducer)` — instant optimistic update, auto-reverts on error
+- `useActionState(async fn, initialState)` — pending/state tracking for note autosave
+- `startTransition(async () => { setOptimistic(...); await mutation... })` — wraps all optimistic ops
+
+**Build result:** `next build` ✓ — 7 routes, TypeScript clean
+
+---
+
 ## Error Log & Lessons Learned
 | ID | Error Description | Resolution | Lesson Learned |
 |---|---|---|---|
