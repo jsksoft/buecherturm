@@ -25,7 +25,6 @@ dist/
 npm-debug.log*
 
 # Database
-migrations/
 *.db
 
 # Type coverage
