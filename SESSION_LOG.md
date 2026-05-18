@@ -151,6 +151,38 @@ Run again: `pnpm --filter @buecherturm/shared verify:crypto`
 
 ## Phase 4 Log
 
+### Step 6: Multi-Source Search with Auto-Caching (2026-05-18)
+**Status:** Completed ✓
+
+**tRPC `searchRouter` (`packages/api/src/routers/search.ts`):**
+| Source | Protocol | Notes |
+|---|---|---|
+| **Local DB** | Drizzle `ilike` on title + `array_to_string(authors)` | Instant; ISBN-exact match if input ≥ 10 chars |
+| **DNB** (Deutsche Nationalbibliothek) | SRU / `oai_dc` XML | Primary external source per PRD F-03; 5s timeout |
+| **OpenLibrary** | JSON REST | Fallback; provides cover URLs |
+| **Google Books** | JSON REST, `langRestrict=de` | Final fallback; provides descriptions |
+
+**Fetch strategy:**
+- Local DB + DNB run in **parallel** for minimum latency
+- OpenLibrary + Google Books only triggered if combined local + DNB < 5 results
+- Results deduplicated by ISBN (or title prefix) — later sources fill in missing `coverUrl`/`description`
+- Cache: `onConflictDoNothing()` insert into `books` table, fire-and-forget
+
+**Privacy:** Search query is NOT written to any table linked to a user ID (CLAUDE.md rule #4, PRD F-03). `protectedProcedure` enforces auth without logging the query term.
+
+**Search UI (`apps/web/src/app/(app)/app/search/page.tsx`):**
+- Results appear after **2 characters** (`enabled: trimmed.length >= 2`)
+- `keepPreviousData` from TanStack Query v5 — previous results stay visible while refetching (no flicker)
+- Spinner in input right-side during `isFetching`
+- Color-coded source badge per result (Katalog / DNB / OpenLibrary / Google Books)
+- `aria-live="polite"` on result list for screen-reader announcements
+- Cover thumbnail (44×64px) with 📚 fallback
+- Chevron affordance — taps through to `/book/[isbn]`
+
+**Build result:** `next build` ✓ — 8 routes, TypeScript clean
+
+---
+
 ### Step 5: Optimistic Tracking UI & Encrypted Notes (2026-05-18)
 **Status:** Completed ✓
 
