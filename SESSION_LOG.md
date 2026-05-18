@@ -2,7 +2,7 @@
 ## Status
 - [x] Phase 1: Infrastructure & Scaffolding
 - [x] Phase 2: Database Schema & Security (RLS)
-- [ ] Phase 3: Auth & Responsive Shell
+- [x] Phase 3: Auth & Responsive Shell
 - [ ] Phase 4: Core Tracking & Search
 - [ ] Phase 5: AI Features & Admin
 - [ ] Phase 6: GDPR & Final Audit
@@ -59,6 +59,56 @@
 - [ ] Run STEP 2 of `supabase_setup.sql` (RLS policies)
 - [ ] Run seed: `cd packages/database && node_modules/.bin/dotenv -e ../../apps/web/.env.local -- npx tsx src/seed.ts`
 - [ ] STEP 3 (ivfflat index) — deferred until books table has >1000 rows
+
+---
+
+---
+
+## Phase 3 Log
+
+### Step 4: Auth & Responsive Shell (2026-05-18)
+**Status:** Completed ✓
+
+**tRPC 11 Layer (`packages/api`):**
+| File | Purpose |
+|---|---|
+| `src/context.ts` | `createContext({ req })` — validates `Authorization: Bearer` JWT via Supabase admin; exposes `{ user, supabaseAdmin }` |
+| `src/trpc.ts` | `publicProcedure`, `protectedProcedure` (UNAUTHORIZED guard) |
+| `src/routers/auth.ts` | `auth.register`, `auth.login`, `auth.me` |
+| `src/_app.ts` | Root router — `health` + `auth` namespace |
+
+**Auth flow (register):**
+1. `auth.register` mutation receives `{ email, password, displayName? }`
+2. `supabaseAdmin.auth.admin.createUser()` creates the Supabase Auth user with `email_confirm: true`
+3. `encrypt(email, ENCRYPTION_SECRET)` wraps email with AES-256-GCM (GDPR rule #1)
+4. Drizzle `UPDATE users SET email_encrypted = ...` stores ciphertext
+5. `supabaseAdmin.auth.signInWithPassword()` returns a session — client stores `{ accessToken, refreshToken, expiresAt }` in localStorage
+
+**Client-side session (`apps/web`):**
+| File | Purpose |
+|---|---|
+| `src/lib/session.ts` | Module-level localStorage cache (`getSession`, `setSession`, `clearSession`) |
+| `src/providers/session-provider.tsx` | React context — hydrates from localStorage post-mount (no SSR mismatch) |
+| `src/providers/trpc-provider.tsx` | `TRPCProvider` — `httpBatchLink` with dynamic `Authorization` header |
+
+**Responsive shell:**
+| File | Purpose |
+|---|---|
+| `src/components/shell/sidebar.tsx` | Desktop: fixed left, 256px, hidden on mobile (`hidden lg:flex`) |
+| `src/components/shell/bottom-nav.tsx` | Mobile: fixed bottom, 64px, hidden on desktop (`lg:hidden`) |
+| `src/components/auth/auth-guard.tsx` | Redirects unauthenticated users to `/login`; shows spinner during hydration |
+| `src/app/(app)/layout.tsx` | App shell — `AuthGuard` + Sidebar + BottomNav + content area |
+| `src/app/(auth)/layout.tsx` | Auth layout — centered card, `max-w-md` |
+| `src/app/(auth)/login/page.tsx` | Login form — tRPC mutation, field validation, error display |
+| `src/app/(auth)/register/page.tsx` | Register form — display name optional, encrypted email on submit |
+
+**Build result:** `next build` ✓ — 6 routes (`/`, `/login`, `/register`, `/app`, `/_not-found`, `/api/trpc/[trpc]`), TypeScript clean
+
+**Design tokens used:**
+- Auth card: `card` utility (white, `shadow-card`, `radius-card`)
+- Auth inputs: `.auth-input` component (`border`, focus `ring-brand-500`)
+- Auth button: `.auth-btn-primary` (`bg-brand-500`, `hover:bg-brand-600`)
+- Colors: OKLCH palette — brand amber for active nav, surface-50 background
 
 ---
 

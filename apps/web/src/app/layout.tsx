@@ -1,12 +1,14 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import { SessionProvider } from '../providers/session-provider';
+import { TRPCProvider } from '../providers/trpc-provider';
 
 export const metadata: Metadata = {
   title: {
     default: 'Bücherturm',
     template: '%s | Bücherturm',
   },
-  description: 'Dein privates, KI-gestütztes Buch-Tracking.',
+  description: 'Your private, AI-powered book tracker.',
   applicationName: 'Bücherturm',
 };
 
@@ -20,14 +22,14 @@ export const viewport: Viewport = {
   ],
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="de">
-      <body>{children}</body>
+    <html lang="en">
+      <body>
+        <SessionProvider>
+          <TRPCProvider>{children}</TRPCProvider>
+        </SessionProvider>
+      </body>
     </html>
   );
 }
